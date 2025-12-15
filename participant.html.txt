@@ -1,0 +1,204 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, query, onSnapshot, doc, setDoc, deleteDoc, writeBatch, getDocs } from 'firebase/firestore';
+import { Loader, List, Users, Award, Zap, Trash2, RefreshCw } from 'lucide-react';
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+const SUBMISSION_COLLECTION_PATH = 'artifacts/' + appId + '/public/data/submissions';
+const FINAL_ASSIGNMENT_DOC_PATH = 'artifacts/' + appId + '/public/data/FINAL_ASSIGNMENT_STATUS/team_list';
+
+const ALL_TASKS = [
+    { key: 'S_HEAVY', taskName: '籤一：公區前 (掃拖組)', detail: '6.0 WU，負責公區前地面掃拖及立面整潔。', type: 'S' },
+    { key: 'S_MEDIUM', taskName: '籤二：公區後 (掃拖組)', detail: '6.0 WU，負責公區後地面掃拖及立面整潔。', type: 'S' },
+    { key: 'S_LIGHT', taskName: '籤三：多區域掃拖組', detail: '5.7 WU，負責倉庫、大小會議室地面掃拖。', type: 'S' },
+    { key: 'Z', taskName: '籤四：內部與複雜整理組', detail: '5.0 WU，負責冰箱/櫥櫃內部清潔與倉庫雜物整理。', type: 'Z' },
+    { key: 'H', taskName: '籤五：活動與擦拭收尾組', detail: '4.7 WU，負責活動準備(湯圓/蛋糕)及所有檯面擦拭與最終收尾。', type: 'H' },
+];
+
+const App = () => {
+  const [db, setDb] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [submissions, setSubmissions] = useState([]); 
+  const [finalTeams, setFinalTeams] = useState(null);
+  const [expectedParticipants, setExpectedParticipants] = useState(10);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!firebaseConfig) { setError('Missing Config'); return; }
+    try {
+      const app = initializeApp(firebaseConfig);
+      const firestore = getFirestore(app);
+      const auth = getAuth(app);
+      setDb(firestore);
+      onAuthStateChanged(auth, async (u) => {
+        if (u) setUserId(u.uid);
+        else initialAuthToken ? await signInWithCustomToken(auth, initialAuthToken) : await signInAnonymously(auth);
+        setLoading(false);
+      });
+    } catch (e) { setError(e.message); }
+  }, []);
+
+  useEffect(() => {
+    if (!db) return;
+    const unsubSub = onSnapshot(query(collection(db, SUBMISSION_COLLECTION_PATH)), (snap) => {
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // 簡單排序
+        data.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+        setSubmissions(data);
+    });
+    const unsubAssign = onSnapshot(doc(db, FINAL_ASSIGNMENT_DOC_PATH), (snap) => {
+        setFinalTeams(snap.exists() ? snap.data().teams : null);
+    });
+    return () => { unsubSub(); unsubAssign(); };
+  }, [db]);
+
+  const determineFinalTeams = useCallback((list) => {
+    if (list.length === 0) return {};
+    let participants = list.map(s => s.name).sort((a, b) => a.localeCompare(b, 'zh-TW'));
+    const tasks = [...ALL_TASKS];
+    const teams = {};
+    let tIdx = 0;
+    while(participants.length > 0 && tIdx < tasks.length) {
+        const m1 = participants.shift();
+        const m2 = participants.shift() || null;
+        teams[tasks[tIdx].taskName] = m2 ? [m1, m2] : [m1];
+        tIdx++;
+    }
+    // 處理多餘人數
+    let extraIdx = 1;
+    while(participants.length > 0) {
+        teams[`額外任務 ${extraIdx++}`] = [participants.shift()];
+    }
+    return teams;
+  }, []);
+
+  const handlePublish = async () => {
+    if (!db || isProcessing) return;
+    setIsProcessing(true);
+    try {
+        const teams = determineFinalTeams(submissions);
+        await setDoc(doc(db, FINAL_ASSIGNMENT_DOC_PATH), { teams, publishedAt: new Date().toISOString() });
+        alert('發布成功！');
+    } catch(e) { alert(e.message); }
+    setIsProcessing(false);
+  };
+
+  // --- 重置功能 ---
+  
+  // 1. 僅重置分組 (讓大家回到等待狀態，保留提交資料)
+  const handleResetAssignment = async () => {
+      if(!db || isProcessing) return;
+      if(!confirm('確定要撤回分組發布嗎？同事將變回「等待中」狀態。')) return;
+      setIsProcessing(true);
+      try {
+          await deleteDoc(doc(db, FINAL_ASSIGNMENT_DOC_PATH));
+          alert('分組已重置。');
+      } catch(e) { alert(e.message); }
+      setIsProcessing(false);
+  };
+
+  // 2. 清空所有資料 (測試用：刪除所有提交 + 分組)
+  const handleWipeAllData = async () => {
+      if(!db || isProcessing) return;
+      const confirmCode = Math.floor(1000 + Math.random() * 9000);
+      const input = prompt(`【危險操作】這將刪除 ${submissions.length} 筆提交紀錄和最終分組。\n若確定要清空，請輸入驗證碼：${confirmCode}`);
+      if (input != confirmCode) return;
+
+      setIsProcessing(true);
+      try {
+          // 刪除分組文件
+          await deleteDoc(doc(db, FINAL_ASSIGNMENT_DOC_PATH));
+          
+          // 批次刪除提交紀錄
+          const batch = writeBatch(db);
+          const snap = await getDocs(collection(db, SUBMISSION_COLLECTION_PATH));
+          snap.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+          
+          alert('所有測試資料已清空！');
+      } catch(e) { alert('清空失敗: ' + e.message); }
+      setIsProcessing(false);
+  };
+
+  if (loading) return <div className="p-10 text-center">載入中...</div>;
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-8 font-sans text-gray-800">
+      <div className="max-w-5xl mx-auto bg-white shadow-xl rounded-2xl overflow-hidden">
+        <div className="bg-blue-600 p-6 text-white flex justify-between items-center">
+            <h1 className="text-2xl font-bold flex items-center"><Users className="mr-3"/> 打掃分配後台</h1>
+            <div className="text-sm bg-blue-700 px-3 py-1 rounded">已提交: {submissions.length} 人</div>
+        </div>
+
+        <div className="p-8">
+            {/* 控制台 */}
+            <div className="bg-gray-100 p-6 rounded-xl mb-8 border border-gray-200">
+                <h2 className="text-lg font-bold mb-4 flex items-center"><Zap className="mr-2 text-yellow-600"/> 操作控制台</h2>
+                <div className="flex flex-wrap gap-4 items-center">
+                    <div className="flex items-center bg-white px-3 py-2 rounded border">
+                        <span className="text-sm mr-2">預期人數:</span>
+                        <input type="number" value={expectedParticipants} onChange={e=>setExpectedParticipants(e.target.value)} className="w-16 text-center border-b border-blue-500 outline-none"/>
+                    </div>
+                    
+                    <button onClick={handlePublish} disabled={isProcessing} 
+                        className={`px-6 py-2 rounded-lg text-white font-bold shadow ${submissions.length >= expectedParticipants ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400'}`}>
+                        {isProcessing ? '處理中...' : '計算並發布分組'}
+                    </button>
+
+                    <div className="border-l border-gray-300 h-8 mx-2"></div>
+
+                    <button onClick={handleResetAssignment} disabled={!finalTeams} className="flex items-center px-4 py-2 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200">
+                        <RefreshCw size={16} className="mr-2"/> 重置分組
+                    </button>
+                    
+                    <button onClick={handleWipeAllData} className="flex items-center px-4 py-2 bg-red-100 text-red-800 rounded hover:bg-red-200 ml-auto">
+                        <Trash2 size={16} className="mr-2"/> 清空所有資料 (重新測試)
+                    </button>
+                </div>
+            </div>
+
+            {/* 資料顯示 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <h3 className="text-xl font-bold mb-4 flex items-center text-blue-800"><List className="mr-2"/> 提交名單 ({submissions.length})</h3>
+                    {submissions.length === 0 ? <p className="text-gray-400 italic">尚無資料...</p> : 
+                    <div className="max-h-96 overflow-y-auto border rounded bg-gray-50">
+                        {submissions.map(s => (
+                            <div key={s.id} className="p-3 border-b last:border-0 hover:bg-white flex justify-between">
+                                <span>{s.name}</span>
+                                <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">{s.primaryTrait} / {s.timeSpent}s</span>
+                            </div>
+                        ))}
+                    </div>}
+                </div>
+
+                <div>
+                    <h3 className="text-xl font-bold mb-4 flex items-center text-green-800"><Award className="mr-2"/> 最終分組</h3>
+                    {!finalTeams ? <div className="p-10 bg-gray-50 rounded border border-dashed border-gray-300 text-center text-gray-400">尚未發布</div> : 
+                    <div className="space-y-3">
+                        {Object.keys(finalTeams).map(k => (
+                            <div key={k} className="p-4 bg-green-50 rounded border border-green-200">
+                                <div className="font-bold text-green-900">{k.split('：')[0]}</div>
+                                <div className="text-green-700 mt-1">{finalTeams[k].join('、')}</div>
+                            </div>
+                        ))}
+                    </div>}
+                </div>
+            </div>
+            
+            <div className="mt-8 text-xs text-gray-400 text-center">
+                Data Path: {SUBMISSION_COLLECTION_PATH}
+            </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;

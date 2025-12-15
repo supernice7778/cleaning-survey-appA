@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>打掃工作分配系統導航</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f7f3f9; }
+        .macaron-blue { background-color: #e0f2ff; }
+        .card-shadow { box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+    </style>
+</head>
+<body class="p-8 flex items-center justify-center min-h-screen">
+
+    <div class="max-w-xl w-full macaron-blue rounded-3xl p-10 card-shadow text-center">
+        <h1 class="text-4xl font-extrabold text-gray-800 mb-6 border-b-4 border-pink-500 pb-3">
+            打掃工作分配系統
+        </h1>
+        <p class="text-lg text-gray-600 mb-8">
+            請選擇您的角色以進入對應頁面。
+        </p>
+
+        <div class="space-y-6">
+            
+            <!-- 參與者入口：連結指向 participant.html -->
+            <a href="participant.html" target="_blank" class="block">
+                <button class="w-full p-4 bg-pink-600 text-white text-xl font-bold rounded-xl shadow-lg hover:bg-pink-700 transition transform hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-4 focus:ring-pink-300">
+                    🧑 參與者入口 (participant.html)
+                    <span class="block text-sm font-light mt-1">進入測驗與查看分組結果</span>
+                </button>
+            </a>
+            
+            <!-- 主持人入口：連結指向 host_view.html -->
+            <a href="host_view.html" target="_blank" class="block">
+                <button class="w-full p-4 bg-purple-600 text-white text-xl font-bold rounded-xl shadow-lg hover:bg-purple-700 transition transform hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-4 focus:ring-purple-300">
+                    👑 主持人儀表板 (host_view.html)
+                    <span class="block text-sm font-light mt-1">查看測驗結果與發布最終分組</span>
+                </button>
+            </a>
+            
+        </div>
+        
+        <p class="text-sm text-gray-400 mt-8">
+            此為網站的起始頁面 (`index.html`)。
+        </p>
+    </div>
+
+</body>
+</html>
